@@ -1,0 +1,304 @@
+#!/bin/bash
+
+set -o nounset
+
+declare -A PROPERTIES
+
+###############################################################################
+# PROPERTIES RELATED FUNCTIONS
+###############################################################################
+function parse_properties_file() {
+    local file="$1"
+
+    if [[ ! -G "$file" ]]; then
+        return 1
+    fi
+
+    while read -r line || [[ -n $line ]]; do
+        if [[ "$line" =~ ^\s*\#.* ]]; then
+            continue
+        fi
+        key=$(echo "$line" | cut -s -d'=' -f1)
+        if [[ -n "$key" ]]; then
+            value=$(echo "$line" | cut -d'=' -f2-)
+            PROPERTIES["$key"]="$value"
+        fi
+    done <"$file"
+
+    return 0
+}
+
+function get_value() {
+    local key="$1"
+    local default="${2:-}"
+
+    echo "${PROPERTIES["$key"]:-${default}}"
+}
+
+function check_properties() {
+    local provider
+
+    validate_mandatory_property "cloud_provider"
+
+    provider=$(get_value "cloud_provider")
+
+    if [[ "${provider}" == "azure" ]]; then
+        check_azure_properties
+    else
+        error_msg "Provider '${provider}' not supported."
+    fi
+}
+
+function check_azure_properties() {
+    validate_mandatory_property "subscription_id"
+    validate_mandatory_property "tenant_id"
+    validate_mandatory_property "client_id"
+    validate_mandatory_property "client_secret"
+    validate_mandatory_property "cluster_name"
+    validate_mandatory_property "location"
+    validate_mandatory_property "resource_group_name"
+}
+
+function validate_mandatory_property() {
+    local property="${1}"
+    local value
+
+    value=$(get_value "${property}")
+
+    if [[ -z "${value:-}" ]]; then
+        error_msg "Property '${property}' is mandandatory. Please provide a value for it in configuration file."
+        exit 1
+    fi
+}
+
+function validate_property_regex() {
+    local property="${1}"
+    local regex="${2}"
+    local msg="${3:-}"
+    local value
+
+    value="$(get_value "${property}")"
+
+    if [[ ! "${value}" =~ ["${regex}"] ]]; then
+        error_msg "Invalid value '${value}' for property '${property}'. ${msg}"
+        exit 1
+    fi
+}
+
+# Converts properties values to terraform env variables.
+function properties_2_tfvars() {
+    for i in "${!PROPERTIES[@]}"; do
+        export "TF_VAR_${i}"="${PROPERTIES[$i]}"
+    done
+}
+
+###############################################################################
+# CONSOLE MESSAGES FUNCIONS
+###############################################################################
+function msg() {
+    echo "$1"
+}
+
+function bold_msg() {
+    echo -e "\e[1m${1}\e[0m"
+}
+
+function error_msg() {
+    echo -e "\e[31mError:\e[39m ${1}" >&2
+}
+
+###############################################################################
+#  INFRASTRUCTURE FUNCIONS
+###############################################################################
+# Determines if it has to use provided SSH keys or generate them.
+function configure_vm_keys() {
+    local private_key
+    local public_key
+
+    private_key=$(get_value "ssh_private_key")
+    public_key=$(get_value "ssh_public_key")
+
+    if [[ ! (-z "${private_key:-}" && -z "${public_key:-}") ]]; then
+        error_msg "Either ssh_private_key or ssh_public_key value is empty, both have to be supplied."
+        return 1
+    fi
+
+    if [[ -z "${private_key:-}" ]]; then
+        if [[ ! -f "./id_rsa" || ! -f "./id_rsa.pub" ]]; then
+            bold_msg "Generating ssh keys..."
+            msg "hola"
+            ssh-keygen -t rsa -m PEM -b 4096 -f ./id_rsa -N "" -q <<<y 2>&1 >/dev/null
+            if [[ ! -f "./id_rsa" ]]; then
+                error_msg "Error generating SSH keys with ssh-keygen."
+                return 1
+            fi
+        else
+            msg "Using found SSH keys in current folder, although they were not defined in poperties file."
+        fi
+
+        PROPERTIES["ssh_private_key"]=$(realpath "id_rsa")
+        PROPERTIES["ssh_public_key"]=$(realpath "id_rsa.pub")
+    else
+        bold_msg "Using provided ssh keys..."
+    fi
+
+    return 0
+}
+
+# Creates/Updates the entire managed infrastructure.
+function create_infra() {
+    local dry_run="${1:-false}"
+    local force="${2:-false}"
+
+    local -r boostrap_path=$(realpath "$(printf "bootstrap/%s/terraform" "$(get_value "cloud_provider")")")
+    local -r plan_file=$(realpath "$(printf "%s.tfplan" "$(get_value "cluster_name")")")
+    local -r state_file=$(realpath "$(printf "%s.tfstate" "$(get_value "cluster_name")")")
+
+    properties_2_tfvars
+
+    terraform init "${boostrap_path}"
+    terraform plan -state "${state_file}" -out "${plan_file}" "${boostrap_path}"
+
+    if [[ "${dry_run}" == "true" ]]; then
+        return
+    fi
+
+    if [[ "${force}" == "true" ]]; then
+        terraform apply -state "${state_file}" "${plan_file}"
+    else
+        while true; do
+            read -r -p "Do you want to apply these changes [Yes/No]? " yn
+            case $yn in
+            [Yy]*)
+                terraform apply -state "${state_file}" "${plan_file}"
+                break
+                ;;
+            [Nn]*) exit 0 ;;
+            *) echo "Please answer yes or no." ;;
+            esac
+        done
+    fi
+
+    terraform output -state "${state_file}" "kube_config" >kube_config
+}
+
+# Destroys the entire managed infrastructure, this cannot be undone!
+function destroy_infra() {
+    local force="${1:-false}"
+
+    local -r boostrap_path=$(realpath "$(printf "bootstrap/%s/terraform" "$(get_value "cloud_provider")")")
+    local -r state_file=$(realpath "$(printf "%s.tfstate" "$(get_value "cluster_name")")")
+
+    properties_2_tfvars
+
+    terraform init "${boostrap_path}"
+
+    if [[ "${force}" == "true" ]]; then
+        terraform destroy -state "${state_file}" "${boostrap_path}" -auto-approve
+    else
+        terraform destroy -state "${state_file}" "${boostrap_path}"
+    fi
+}
+
+###############################################################################
+# GENERIC FUNCTIONS
+###############################################################################
+function usage() {
+    cat <<EOF
+Usage: $0 [-p|--properties <arg>] [-f|--force] [--dry-run] [--destroy]
+
+options:
+  -h, --help                    Shows this help message.
+  -p, --properties=<file>       Kubernetes Cluster configuration values file (default cluster.properties).
+  --dry-run                     Shows the changes to be done, but without applying them.
+  -f, --force                   Applies changes without asking for confirmation.
+  --destroy                     Destroys managed infrastructure(cluster). Be careful with this option!!!
+EOF
+}
+
+# Checks if all required applications/programs are available
+function check_required_apps() {
+    for p in "${@}"; do
+        hash "${p}" 2>&- ||
+            {
+                error_msg "Required program \"${p}\" not installed or in search PATH."
+                exit 1
+            }
+    done
+}
+
+###############################################################################
+# ENTRY POINT
+###############################################################################
+function main() {
+    local opts
+    local properties_file="cluster.properties"
+    local force="false"
+    local dry_run="false"
+    local destroy="false"
+
+    local -r short="hfp:"
+    local -r long="help,force,destroy,dry-run,properties:"
+
+    opts=$(getopt --options "${short}" --long "${long}" --name "${0}" -- "$@")
+    if [[ $? != 0 ]]; then
+        error_msg "Failed to parse options...exiting."
+        exit 1
+    fi
+
+    eval set -- "${opts}"
+
+    while true; do
+        case "${1}" in
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        -p | --properties)
+            properties_file="${2}"
+            shift 2
+            ;;
+        -f | --force)
+            force="true"
+            shift
+            ;;
+        --destroy)
+            destroy="true"
+            shift
+            ;;
+        --dry-run)
+            dry_run="true"
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            error_msg "Internal Error!"
+            exit 1
+            ;;
+        esac
+    done
+
+    check_required_apps "terraform" "realpath" "ssh-keygen"
+
+    if ! parse_properties_file "$properties_file"; then
+        error_msg "Unable to parse $properties_file"
+        exit 1
+    fi
+
+    check_properties
+
+    if ! configure_vm_keys; then
+        exit 1
+    fi
+
+    if [[ "${destroy}" == "true" ]]; then
+        destroy_infra "${force}"
+    else
+        create_infra "${dry_run}" "${force}"
+    fi
+}
+
+main "$@"

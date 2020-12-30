@@ -1,0 +1,6 @@
+.terraform
+*.tfplan
+*.tfstate
+*.tfstate.backup
+id_rsa*
+kube_config
