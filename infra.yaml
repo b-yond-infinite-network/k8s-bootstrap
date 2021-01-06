@@ -1,0 +1,94 @@
+
+cloud_provider: azure
+subscription_id: <<Please Provide>>
+tenant_id: <<Please Provide>>
+client_id: <<Please Provide>>
+client_secret: <<Please Provide>>
+location: canadacentral
+
+log:
+  analytics_workspace:
+    location: canadacentral
+    sku: PerGB2018
+    name: ws-aks-canadacentral
+
+## OPTIONAL: Terraform persisting state in remote storage
+# backend:
+#   enabled: true
+#   container_name: k8s-bootstrap
+#   resource_group_name: k8s-bootstrap
+#   storage_account_name: k8sbootstrap31479
+#   access_key:
+
+ssh:
+  user: ubuntu
+  # When not provided (commented) they'll be created by the script.
+  # private_key: ./id_rsa
+  # public_key: ./id_rsa.pub
+
+aks:
+  cluster_name: aks-cluster
+  resource_group_name: aks-group
+  k8s_version: 1.16.15
+  network:
+    name: aks-network
+    cidr:
+      - 10.240.0.0/16
+  subnet:
+    name: aks-subnet
+    cidr:
+      - 10.240.1.0/24
+  default_node_pool:
+    name: default
+    node_count: 2
+    vm_size: Standard_D4s_v3
+    zones: [1, 2]
+    #node_os:  "Linux"
+    labels: {test="true",test2="true"}
+    auto_scaling:
+        enabled:  false
+        min_count: null
+        max_count: null
+  # additional_node_pools:
+  #   - name: pool2
+  #     node_count: 2
+  #     vm_size: "Standard_D4s_v3"
+  #     zones: null
+  #     #node_os: "Linux"
+  #     taints: ["kubernetes.io/os=windows:NoSchedule"]
+  #     auto_scaling:
+  #       enabled:  true
+  #       min_count: 1
+  #       max_count: 5
+  #   - name: pool3
+  #     node_count: 2
+  #     vm_size: "Standard_D4s_v3"
+  #     zones: null
+  #     node_os: "Linux"
+  #     auto_scaling:
+  #       enabled:  false
+  #       min_count: null
+  #       max_count: null
+
+vertica:
+  resource_group_name: vertica-group
+  flavor: Standard_D4s_v3
+  node_count: 1
+  bkp_disk_size: 1023
+  disk_size: 3069
+  network:
+    name: vertica-network
+    cidr:
+      - 10.10.0.0/16
+  subnet:
+    name: vertica-subnet
+    cidr:
+      - 10.10.1.0/24
+  #Fixed Vertica Load Balancer static IP (in vertica subnet)
+  lb_static_ip: 10.10.1.15
+
+
+data_science:
+  enabled: true
+  flavor: Standard_D2s_v3
+  disk_size: 1023

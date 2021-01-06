@@ -1,219 +1,481 @@
 #!/bin/bash
 
+# shellcheck disable=SC1003
+
 set -o nounset
 
-declare -A PROPERTIES
+# CONSTANTS
+declare -r script_path=$(
+    cd $(dirname ${BASH_SOURCE[0]}) >/dev/null
+    pwd -P
+)
+declare -r output_dir="${script_path}/output"
+declare -r variables_file="${output_dir}/infra.tfvars"
+declare -r backend_file="generated-backend.tf"
+
+# THE DEFAULTS INITIALIZATION
+declare -a _positionals=()
+declare _arg_command="apply"
+declare _arg_file="infra.yaml"
+declare _arg_force="off"
+declare _arg_dry_run="off"
+declare ssh_private_key=""
+declare ssh_public_key=""
 
 ###############################################################################
-# PROPERTIES RELATED FUNCTIONS
+# VARIABLES RELATED FUNCTIONS
 ###############################################################################
-function parse_properties_file() {
-    local file="$1"
 
-    if [[ ! -G "$file" ]]; then
-        return 1
-    fi
+## CREDITS TO: https://github.com/jasperes/bash-yaml
+function parse_yaml() {
+    local yaml_file=$1
+    local prefix=$2
+    local s
+    local w
+    local fs
 
-    while read -r line || [[ -n $line ]]; do
-        if [[ "$line" =~ ^\s*\#.* ]]; then
-            continue
-        fi
-        key=$(echo "$line" | cut -s -d'=' -f1)
-        if [[ -n "$key" ]]; then
-            value=$(echo "$line" | cut -d'=' -f2-)
-            PROPERTIES["$key"]="$value"
-        fi
-    done <"$file"
+    s='[[:space:]]*'
+    w='[a-zA-Z0-9_.-]*'
+    fs="$(echo @ | tr @ '\034')"
 
-    return 0
+    (
+        sed -e '/- [^\“]'"[^\']"'.*: /s|\([ ]*\)- \([[:space:]]*\)|\1-\'$'\n''  \1\2|g' |
+            sed -ne '/^--/s|--||g; s|\"|\\\"|g; s/[[:space:]]*$//g;' \
+                -e "/#.*[\"\']/!s| #.*||g; /^#/s|#.*||g;" \
+                -e "s|^\($s\)\($w\)$s:$s\"\(.*\)\"$s\$|\1$fs\2$fs\3|p" \
+                -e "s|^\($s\)\($w\)${s}[:-]$s\(.*\)$s\$|\1$fs\2$fs\3|p" |
+            gawk -F"$fs" '{
+            indent = length($1)/2;
+            if (length($2) == 0) { conj[indent]="+";} else {conj[indent]="";}
+            vname[indent] = $2;
+            for (i in vname) {if (i > indent) {delete vname[i]}}
+                if (length($3) > 0) {
+                    vn=""; for (i=0; i<indent; i++) {vn=(vn)(vname[i])("_")}
+                    printf("%s%s%s%s=(\"%s\")\n", "'"$prefix"'",vn, $2, conj[indent-1], gensub("\\$", "\\\\$", "g", $3));
+                }
+            }' |
+            sed -e 's/_=/+=/g' |
+            gawk 'BEGIN {
+                FS="=";
+                OFS="="
+            }
+            /(-|\.).*=/ {
+                gsub("-|\\.", "_", $1)
+            }
+            { print }'
+    ) <"$yaml_file"
 }
 
-function get_value() {
-    local key="$1"
-    local default="${2:-}"
-
-    echo "${PROPERTIES["$key"]:-${default}}"
-}
-
-function check_properties() {
-    local provider
-
-    validate_mandatory_property "cloud_provider"
-
-    provider=$(get_value "cloud_provider")
-
-    if [[ "${provider}" == "azure" ]]; then
-        check_azure_properties
-    else
-        error_msg "Provider '${provider}' not supported."
-    fi
-}
-
-function check_azure_properties() {
-    validate_mandatory_property "subscription_id"
-    validate_mandatory_property "tenant_id"
-    validate_mandatory_property "client_id"
-    validate_mandatory_property "client_secret"
-    validate_mandatory_property "cluster_name"
-    validate_mandatory_property "location"
-    validate_mandatory_property "resource_group_name"
-}
-
-function validate_mandatory_property() {
-    local property="${1}"
-    local value
-
-    value=$(get_value "${property}")
-
-    if [[ -z "${value:-}" ]]; then
-        error_msg "Property '${property}' is mandandatory. Please provide a value for it in configuration file."
-        exit 1
-    fi
-}
-
-function validate_property_regex() {
-    local property="${1}"
-    local regex="${2}"
-    local msg="${3:-}"
-    local value
-
-    value="$(get_value "${property}")"
-
-    if [[ ! "${value}" =~ ["${regex}"] ]]; then
-        error_msg "Invalid value '${value}' for property '${property}'. ${msg}"
-        exit 1
-    fi
-}
-
-# Converts properties values to terraform env variables.
-function properties_2_tfvars() {
-    for i in "${!PROPERTIES[@]}"; do
-        export "TF_VAR_${i}"="${PROPERTIES[$i]}"
+function unset_variables() {
+    # Pulls out the variable names and unsets them.
+    local variable_string="$@"
+    unset variables
+    variables=()
+    for variable in ${variable_string[@]}; do
+        variables+=($(echo $variable | grep '=' | sed 's/=.*//' | sed 's/+.*//'))
+    done
+    for variable in ${variables[@]}; do
+        unset "$variable"
     done
 }
 
-###############################################################################
-# CONSOLE MESSAGES FUNCIONS
-###############################################################################
-function msg() {
-    echo "$1"
+function create_variables() {
+    local yaml_file="$1"
+    local prefix="${2:-}"
+    local yaml_string="$(parse_yaml "$yaml_file" "$prefix")"
+    unset_variables ${yaml_string[@]}
+    eval "${yaml_string}"
 }
 
-function bold_msg() {
-    echo -e "\e[1m${1}\e[0m"
+function generate_tfvalues_file() {
+    local yaml="$1"
+
+    create_variables "$yaml"
+
+    if ! configure_vm_keys; then
+        exit 1
+    fi
+
+    {
+        echo "#Autogenerated tfvars file"
+        for i in "${!variables[@]}"; do
+            if [[ ! "${variables[$i]}" =~ "default_node_pool" ]] &&
+                [[ ! "${variables[$i]}" =~ "additional_node_pools" ]] &&
+                [[ ! "${variables[$i]}" =~ "_cidr" ]] &&
+                [[ ! "${variables[$i]}" =~ "backend" ]] &&
+                [[ "${variables[$i]}" != "cloud_provider" ]]; then
+
+                echo "${variables[$i]} = $(wrap_quotes "${!variables[$i]}")"
+            fi
+        done
+    } >"$variables_file"
+
+    # Render AKS Pool options
+    {
+        cat <<EOF
+aks_default_node_pool = {
+    name                           = $(wrap_quotes "${aks_default_node_pool_name:-}" "default")
+    node_count                     = ${aks_default_node_pool_node_count:-}
+    vm_size                        = $(wrap_quotes "${aks_default_node_pool_vm_size:-}")
+    zones                          = ${aks_default_node_pool_zones:-null}
+    node_os                        = $(wrap_quotes "${aks_default_node_pool_node_os:-}" null)
+    labels                         = ${aks_default_node_pool_labels:-null}
+    taints                         = ${aks_default_node_pool_taints:-null}
+    cluster_auto_scaling           = ${aks_default_node_pool_auto_scaling__enabled:-false}
+    cluster_auto_scaling_min_count = ${aks_default_node_pool_auto_scaling__min_count:-null}
+    cluster_auto_scaling_max_count = ${aks_default_node_pool_auto_scaling__max_count:-null}
+}
+EOF
+
+        if [[ -n "${aks_additional_node_pools__name:-}" ]]; then
+            local upperlim="${#aks_additional_node_pools__name[@]}"
+
+            for ((i = 0; i < ${upperlim:-0}; i++)); do
+                if [[ "$i" -eq 0 ]]; then
+                    echo "aks_additional_node_pools = {"
+                fi
+                cat <<EOF
+   ${aks_additional_node_pools__name[i]} = {
+      node_count                     = ${aks_additional_node_pools__node_count[i]:-}
+      vm_size                        = $(wrap_quotes "${aks_additional_node_pools__vm_size[i]:-}")
+      zones                          = ${aks_additional_node_pools__zones[i]:-null}
+      node_os                        = $(wrap_quotes "${aks_additional_node_pools__node_os[i]:-}" null)
+      labels                         = ${aks_additional_node_pools__labels[i]:-null}
+      taints                         = ${aks_additional_node_pools__taints[i]:-null}
+      cluster_auto_scaling           = ${aks_additional_node_pools__auto_scaling_enabled[i]:-false}
+      cluster_auto_scaling_min_count = ${aks_additional_node_pools__auto_scaling_min_count[i]:-null}
+      cluster_auto_scaling_max_count = ${aks_additional_node_pools__auto_scaling_max_count[i]:-null}
+   }
+EOF
+                if [[ "$i" -eq $((upperlim - 1)) ]]; then
+                    echo "}"
+                fi
+            done
+        fi
+    } >>"$variables_file"
+
+    # Render CIDR options
+    {
+        convert_tfvars_list "aks_network_cidr" "${aks_network_cidr[@]}"
+        convert_tfvars_list "aks_subnet_cidr" "${aks_subnet_cidr[@]}"
+        convert_tfvars_list "vertica_subnet_cidr" "${vertica_subnet_cidr[@]}"
+        convert_tfvars_list "vertica_network_cidr" "${vertica_network_cidr[@]}"
+    } >>"$variables_file"
 }
 
-function error_msg() {
-    echo -e "\e[31mError:\e[39m ${1}" >&2
+# Wrap with quotes when needed. When value=null it is returned without quotes."
+function wrap_quotes() {
+    local value="${1:-}"
+    local default="${2:-}"
+
+    if [[ -z "${value}" ]]; then
+        if [[ -n "${default}" ]]; then
+            if [[ "${default}" != "null" ]]; then
+                echo "\"${default}\""
+            else
+                echo "null"
+            fi
+        fi
+    else
+        if [[ "${value}" =~ '"' ]]; then
+            echo "${value}"
+        else
+            echo "\"${value}\""
+        fi
+    fi
 }
 
-###############################################################################
-#  INFRASTRUCTURE FUNCIONS
-###############################################################################
+# Transforms yaml lists into tfvars list
+function convert_tfvars_list() {
+    local name=$1
+    shift
+    local values=$1
+    shift
+    if [[ -n "${name:-}" ]]; then
+        printf '%s' "$name = [ "
+        printf "%s" "\"$values" "${@/#/\",\"}\""
+        printf " ]\n"
+    fi
+}
+
 # Determines if it has to use provided SSH keys or generate them.
 function configure_vm_keys() {
-    local private_key
-    local public_key
-
-    private_key=$(get_value "ssh_private_key")
-    public_key=$(get_value "ssh_public_key")
-
     if [[ ! (-z "${private_key:-}" && -z "${public_key:-}") ]]; then
         error_msg "Either ssh_private_key or ssh_public_key value is empty, both have to be supplied."
         return 1
     fi
 
     if [[ -z "${private_key:-}" ]]; then
-        if [[ ! -f "./id_rsa" || ! -f "./id_rsa.pub" ]]; then
+        if [[ ! -f "${output_dir}/id_rsa" || ! -f "${output_dir}/id_rsa.pub" ]]; then
             bold_msg "Generating ssh keys..."
-            msg "hola"
-            ssh-keygen -t rsa -m PEM -b 4096 -f ./id_rsa -N "" -q <<<y 2>&1 >/dev/null
-            if [[ ! -f "./id_rsa" ]]; then
+            ssh-keygen -t rsa -m PEM -b 4096 -f "${output_dir}/id_rsa" -N "" -q <<<y 2>&1 >/dev/null
+            if [[ ! -f "${output_dir}/id_rsa" ]]; then
                 error_msg "Error generating SSH keys with ssh-keygen."
                 return 1
             fi
         else
-            msg "Using found SSH keys in current folder, although they were not defined in poperties file."
+            msg "Using found SSH keys in current folder, although they were not defined in poperties file.\n"
         fi
 
-        PROPERTIES["ssh_private_key"]=$(realpath "id_rsa")
-        PROPERTIES["ssh_public_key"]=$(realpath "id_rsa.pub")
+        ssh_private_key=$(realpath "${output_dir}/id_rsa")
+        variables+=("ssh_private_key")
+        ssh_public_key=$(realpath "${output_dir}/id_rsa.pub")
+        variables+=("ssh_public_key")
     else
-        bold_msg "Using provided ssh keys..."
+        bold_msg "Using provided ssh keys...\n"
     fi
 
     return 0
 }
 
+###############################################################################
+# CONSOLE MESSAGES FUNCIONS
+###############################################################################
+function msg() {
+    echo -e "$1"
+}
+
+function bold_msg() {
+    local reset=$(tput sgr0)
+    local bold=$(tput bold)
+
+    echo -e "${bold}${1}${reset}"
+}
+
+function error_msg() {
+    local red=$(tput setaf 1)
+    local reset=$(tput sgr0)
+
+    echo -e "${red}Error:${reset} ${1}" >&2
+}
+
+###############################################################################
+#  INFRASTRUCTURE FUNCIONS
+###############################################################################
+
 # Creates/Updates the entire managed infrastructure.
-function create_infra() {
-    local dry_run="${1:-false}"
-    local force="${2:-false}"
+function run_terraform_create() {
+    local boostrap_path="${1}"
+    local prefix="${2}"
+    local dry_run="${3:-off}"
+    local force="${4:-off}"
+    local state_file_flag=""
 
-    local -r boostrap_path=$(realpath "$(printf "bootstrap/%s/terraform" "$(get_value "cloud_provider")")")
-    local -r plan_file=$(realpath "$(printf "%s.tfplan" "$(get_value "cluster_name")")")
-    local -r state_file=$(realpath "$(printf "%s.tfstate" "$(get_value "cluster_name")")")
+    local -r full_path=$(realpath "${boostrap_path}")
+    local -r plan_file=$(realpath "${output_dir}/${prefix}.tfplan")
+    local -r state_file=$(realpath "${output_dir}/${prefix}.tfstate")
 
-    properties_2_tfvars
-
-    terraform init "${boostrap_path}"
-    terraform plan -state "${state_file}" -out "${plan_file}" "${boostrap_path}"
-
-    if [[ "${dry_run}" == "true" ]]; then
-        return
-    fi
-
-    if [[ "${force}" == "true" ]]; then
-        terraform apply -state "${state_file}" "${plan_file}"
+    # When backend storage is enabled, do not use a -state <file> argument in TF.
+    if [[ "${backend_enabled:-false}" == "true" ]]; then
+        create_backend_config "${full_path}" "${prefix}.tfstate"
     else
-        while true; do
-            read -r -p "Do you want to apply these changes [Yes/No]? " yn
-            case $yn in
-            [Yy]*)
-                terraform apply -state "${state_file}" "${plan_file}"
-                break
-                ;;
-            [Nn]*) exit 0 ;;
-            *) echo "Please answer yes or no." ;;
-            esac
-        done
+        state_file_flag="-state ${state_file}"
     fi
 
-    terraform output -state "${state_file}" "kube_config" >kube_config
+    (
+        cd "${full_path}" || {
+            error_msg "Unable to change directory to ${full_path}"
+            exit 1
+        }
+
+        terraform init
+
+        # In this case state_file_flag has to be without quotes otherwise it's taken
+        # as en extra argument by terraform.
+        if ! terraform plan $state_file_flag \
+            -var-file "${variables_file}" \
+            -out "${plan_file}"; then
+            exit 1
+        fi
+
+        if [[ "${dry_run}" == "on" ]]; then
+            return
+        fi
+
+        if [[ "${force}" == "on" ]]; then
+            terraform apply $state_file_flag "${plan_file}"
+        else
+            while true; do
+                read -r -p "Do you want to apply these changes [Yes/No]? " yn
+                case $yn in
+                [Yy]*)
+                    terraform apply $state_file_flag "${plan_file}"
+                    break
+                    ;;
+                [Nn]*) exit 0 ;;
+                *) echo "Please answer yes or no." ;;
+                esac
+            done
+        fi
+
+        if [[ "${backend_enabled:-false}" == "true" ]]; then
+            bold_msg "\nCreate local copy of tfstate from remote store..."
+            terraform state pull >"${state_file}"
+        fi
+    )
+}
+
+function create_backend_config() {
+    local dir="${1}"
+    local key="${2}"
+
+    cat >"${dir}/${backend_file}" <<EOF
+terraform {
+  backend "azurerm" {
+    resource_group_name   = "${backend_resource_group_name}"
+    storage_account_name  = "${backend_storage_account_name}"
+    container_name        = "${backend_container_name}"
+    key                   = "${key}"
+  }
+}
+EOF
+
+    if [[ -n "${backend_access_key:-}" ]]; then
+        export ARM_ACCESS_KEY=${backend_access_key}
+    fi
 }
 
 # Destroys the entire managed infrastructure, this cannot be undone!
-function destroy_infra() {
-    local force="${1:-false}"
+function run_terraform_destroy() {
+    local boostrap_path="${1}"
+    local prefix="${2}"
+    local force="${3:-off}"
+    local state_file_flag=""
 
-    local -r boostrap_path=$(realpath "$(printf "bootstrap/%s/terraform" "$(get_value "cloud_provider")")")
-    local -r state_file=$(realpath "$(printf "%s.tfstate" "$(get_value "cluster_name")")")
+    local -r full_path=$(realpath "${boostrap_path}")
+    local -r state_file=$(realpath "${output_dir}/${prefix}.tfstate")
 
-    properties_2_tfvars
-
-    terraform init "${boostrap_path}"
-
-    if [[ "${force}" == "true" ]]; then
-        terraform destroy -state "${state_file}" "${boostrap_path}" -auto-approve
+    if [[ "${backend_enabled:-false}" == "true" ]]; then
+        create_backend_config "${full_path}" "${prefix}.tfstate"
     else
-        terraform destroy -state "${state_file}" "${boostrap_path}"
+        state_file_flag="-state ${state_file}"
     fi
+
+    (
+        cd "${full_path}" || {
+            error_msg "Unable to change directory to ${full_path}"
+            exit 1
+        }
+
+        terraform init
+
+        if [[ "${force}" == "on" ]]; then
+            terraform destroy $state_file_flag \
+                -var-file "${variables_file}" \
+                -auto-approve \
+                -compact-warnings
+        else
+            terraform destroy $state_file_flag \
+                -var-file "${variables_file}"
+        fi
+    )
 }
 
 ###############################################################################
-# GENERIC FUNCTIONS
+# GENERIC FUNCTIONS (Command line arguments mgmt using argbash)
 ###############################################################################
-function usage() {
-    cat <<EOF
-Usage: $0 [-p|--properties <arg>] [-f|--force] [--dry-run] [--destroy]
+# ARG_OPTIONAL_SINGLE([file],[f],[Values file],[infra.yaml])
+# ARG_OPTIONAL_BOOLEAN([force],[],[Applies changes without asking for confirmation.])
+# ARG_OPTIONAL_BOOLEAN([dry-run],[],[Shows the changes to be done, but without applying them.])
+# ARG_POSITIONAL_SINGLE([command],[Command to execute "apply|destroy\napply: Creates/update infrastructure\ndestroy: Destroys managed infrastructure."],[apply])
+# ARG_HELP([Kubenertes Cluster Bootstrap Tool])
+# ARGBASH_GO()
+# needed because of Argbash --> m4_ignore([
+### START OF CODE GENERATED BY Argbash v2.9.0 one line above ###
+# Argbash is a bash code generator used to get arguments parsing right.
+# Argbash is FREE SOFTWARE, see https://argbash.io for more info
+# Generated online by https://argbash.io/generate
 
-options:
-  -h, --help                    Shows this help message.
-  -p, --properties=<file>       Kubernetes Cluster configuration values file (default cluster.properties).
-  --dry-run                     Shows the changes to be done, but without applying them.
-  -f, --force                   Applies changes without asking for confirmation.
-  --destroy                     Destroys managed infrastructure(cluster). Be careful with this option!!!
+function print_help() {
+    cat <<EOF
+
+Kubenertes Cluster Bootstrap Tool.
+
+Usage:
+  $0 [-f|--file <file>] [--(no-)force] [--(no-)dry-run] [-h|--help] [command]
+
+Available Commands:
+   apply      Creates/Updates managed infrastructure (default command).
+   destroy    Destroys managed infrastructure. Be careful with this option!!!
+
+Flags:
+  -h, --help:               Shows this help message.
+  -f, --file <file>         Values file (default: 'infra.yaml').
+  --dry-run, --no-dry-run   Shows the changes to be done, but without applying them (off by default).
+  --force, --no-force       Applies changes without asking for confirmation (off by default).
+
 EOF
+}
+
+function die() {
+    local _ret="${2:-1}"
+    test "${_PRINT_HELP:-no}" = yes && print_help >&2
+    error_msg "$1"
+    exit "${_ret}"
+}
+
+function begins_with_short_option() {
+    local first_option all_short_options='fh'
+    first_option="${1:0:1}"
+    test "$all_short_options" = "${all_short_options/$first_option/}" && return 1 || return 0
+}
+
+function parse_commandline() {
+    _positionals_count=0
+    while test $# -gt 0; do
+        _key="$1"
+        case "$_key" in
+        -f | --file)
+            test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+            _arg_file="$2"
+            shift
+            ;;
+        --file=*)
+            _arg_file="${_key##--file=}"
+            ;;
+        -f*)
+            _arg_file="${_key##-f}"
+            ;;
+        --no-force | --force)
+            _arg_force="on"
+            test "${1:0:5}" = "--no-" && _arg_force="off"
+            ;;
+        --no-dry-run | --dry-run)
+            _arg_dry_run="on"
+            test "${1:0:5}" = "--no-" && _arg_dry_run="off"
+            ;;
+        -h | --help)
+            print_help
+            exit 0
+            ;;
+        -h*)
+            print_help
+            exit 0
+            ;;
+        *)
+            _last_positional="$1"
+            _positionals+=("$_last_positional")
+            _positionals_count=$((_positionals_count + 1))
+            ;;
+        esac
+        shift
+    done
+}
+
+function handle_passed_args_count() {
+    test "${_positionals_count}" -le 1 || _PRINT_HELP=yes die "FATAL ERROR: There were spurious positional arguments --- we expect between 0 and 1, but got ${_positionals_count} (the last one was: '${_last_positional}')." 1
+}
+
+function assign_positional_args() {
+    local _positional_name _shift_for=$1
+    _positional_names="_arg_command "
+
+    shift "$_shift_for"
+    for _positional_name in ${_positional_names}; do
+        test $# -gt 0 || break
+        eval "$_positional_name=\${1}" || die "Error during argument parsing, possibly an Argbash bug." 1
+        shift
+    done
 }
 
 # Checks if all required applications/programs are available
@@ -227,77 +489,77 @@ function check_required_apps() {
     done
 }
 
+# Creates the shippable output for accessing the VMs and the cluster.
+function create_output_file() {
+    terraform output \
+        -state "${output_dir}/${aks_resource_group_name}.tfstate" \
+        "kube_config" >"${output_dir}/kube_config"
+
+    find "${output_dir}" -type f -name "*.tfstate" | xargs -I STATE \
+        bash -c '{ echo -e "\nExtracting outputs from: STATE\n"; terraform output -state STATE; }' \
+        >"${output_dir}/inventory.txt"
+
+    if [[ "$(dirname "${ssh_private_key}")" != "${output_dir}" ]]; then
+        cp -u "${ssh_private_key}" "${ssh_public_key}" "${output_dir}"
+    fi
+
+    (cd "${output_dir}" && tar -zcf ../output.tar.gz \
+        "inventory.txt" \
+        "$(basename "${ssh_private_key}")" \
+        "$(basename "${ssh_public_key}")" \
+        "kube_config")
+}
+
+# Prepares the tool and cleans up old stuff
+function maintenance_step() {
+    mkdir -p "${output_dir}"
+
+    bold_msg "Cleaning previous execution files...\n"
+    find "${script_path}" -type f \
+        \( -name "${backend_file}" \
+        -o -name "output.tar.gz" \
+        -o -name "terraform.tfstate" \) \
+        -exec rm -f {} \;
+}
+
 ###############################################################################
 # ENTRY POINT
 ###############################################################################
 function main() {
-    local opts
-    local properties_file="cluster.properties"
-    local force="false"
-    local dry_run="false"
-    local destroy="false"
+    parse_commandline "$@"
+    handle_passed_args_count
+    assign_positional_args 1 "${_positionals[@]}"
 
-    local -r short="hfp:"
-    local -r long="help,force,destroy,dry-run,properties:"
+    check_required_apps "terraform" "realpath" "ssh-keygen" "gawk" "basename" "dirname" "tput"
 
-    opts=$(getopt --options "${short}" --long "${long}" --name "${0}" -- "$@")
-    if [[ $? != 0 ]]; then
-        error_msg "Failed to parse options...exiting."
-        exit 1
-    fi
+    maintenance_step
 
-    eval set -- "${opts}"
+    if [[ "${_arg_command}" == "destroy" ]]; then
+        generate_tfvalues_file "${_arg_file}"
 
-    while true; do
-        case "${1}" in
-        -h | --help)
-            usage
-            exit 0
-            ;;
-        -p | --properties)
-            properties_file="${2}"
-            shift 2
-            ;;
-        -f | --force)
-            force="true"
-            shift
-            ;;
-        --destroy)
-            destroy="true"
-            shift
-            ;;
-        --dry-run)
-            dry_run="true"
-            shift
-            ;;
-        --)
-            shift
-            break
-            ;;
-        *)
-            error_msg "Internal Error!"
-            exit 1
-            ;;
-        esac
-    done
+        if [[ "${cloud_provider:-}" == "azure" ]]; then
+            run_terraform_destroy "bootstrap/azure" \
+                "${aks_resource_group_name}" \
+                "${_arg_force}"
+        else
+            error_msg "Defined could provided $cloud_provider is not supported."
+        fi
 
-    check_required_apps "terraform" "realpath" "ssh-keygen"
+    elif [[ "${_arg_command}" == "apply" ]]; then
+        generate_tfvalues_file "${_arg_file}"
 
-    if ! parse_properties_file "$properties_file"; then
-        error_msg "Unable to parse $properties_file"
-        exit 1
-    fi
+        if [[ "${cloud_provider:-}" == "azure" ]]; then
+            run_terraform_create "bootstrap/azure" \
+                "${aks_resource_group_name}" \
+                "${_arg_dry_run}" \
+                "${_arg_force}"
+        else
+            error_msg "Defined could provided $cloud_provider is not supported."
+        fi
 
-    check_properties
-
-    if ! configure_vm_keys; then
-        exit 1
-    fi
-
-    if [[ "${destroy}" == "true" ]]; then
-        destroy_infra "${force}"
+        create_output_file
     else
-        create_infra "${dry_run}" "${force}"
+        error_msg "Invalid command: ${_arg_command}"
     fi
 }
 
