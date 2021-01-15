@@ -11,7 +11,7 @@ provider "azurerm" {
   tenant_id       = var.tenant_id
 }
 
-resource "azurerm_resource_group" "vnet" {
+resource "azurerm_resource_group" "vertica" {
   name     = var.vertica_resource_group_name
   location = var.location
 }
@@ -37,7 +37,7 @@ module "aks_network" {
 
 module "vertica_network" {
   source              = "./modules/vnet"
-  resource_group_name = azurerm_resource_group.vnet.name
+  resource_group_name = azurerm_resource_group.vertica.name
   location            = var.location
   vnet_name           = var.vertica_network_name
   address_space       = var.vertica_network_cidr
@@ -53,7 +53,7 @@ module "vnet_peering" {
   source              = "./modules/vnet_peering"
   vnet_1_name         = var.vertica_network_name
   vnet_1_id           = module.vertica_network.vnet_id
-  vnet_1_rg           = azurerm_resource_group.vnet.name
+  vnet_1_rg           = azurerm_resource_group.vertica.name
   vnet_2_name         = var.aks_network_name
   vnet_2_id           = module.aks_network.vnet_id
   vnet_2_rg           = azurerm_resource_group.k8s.name
@@ -65,7 +65,7 @@ module "vnet_peering" {
 module "bastion" {
   source         = "./modules/bastion"
   location       = var.location
-  resource_group = azurerm_resource_group.vnet.name
+  resource_group = azurerm_resource_group.vertica.name
   subnet_id      = module.vertica_network.subnet_ids[var.vertica_subnet_name]
   vm_user        = var.ssh_user
   ssh_public_key = var.ssh_public_key
@@ -75,7 +75,7 @@ module "data_science" {
   source          = "./modules/data_science"
   instances_count = var.data_science_enabled ? 1 : 0
   location        = var.location
-  resource_group  = azurerm_resource_group.vnet.name
+  resource_group  = azurerm_resource_group.vertica.name
   subnet_id       = module.vertica_network.subnet_ids[var.vertica_subnet_name]
   vm_user         = var.ssh_user
   ssh_public_key  = var.ssh_public_key
@@ -87,7 +87,7 @@ module "vertica_cluster" {
   source         = "./modules/vertica_cluster"
   node_count     = var.vertica_node_count
   location       = var.location
-  resource_group = azurerm_resource_group.vnet.name
+  resource_group = azurerm_resource_group.vertica.name
   subnet_id      = module.vertica_network.subnet_ids[var.vertica_subnet_name]
   vm_user        = var.ssh_user
   ssh_public_key = var.ssh_public_key

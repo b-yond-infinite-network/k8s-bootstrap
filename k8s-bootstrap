@@ -542,7 +542,7 @@ function main() {
                 "${aks_resource_group_name}" \
                 "${_arg_force}"
         else
-            error_msg "Defined could provided $cloud_provider is not supported."
+            error_msg "Defined could provided ${cloud_provider} is not supported."
         fi
 
     elif [[ "${_arg_command}" == "apply" ]]; then
@@ -554,7 +554,7 @@ function main() {
                 "${_arg_dry_run}" \
                 "${_arg_force}"
         else
-            error_msg "Defined could provided $cloud_provider is not supported."
+            error_msg "Defined could provided ${cloud_provider} is not supported."
         fi
 
         create_output_file
