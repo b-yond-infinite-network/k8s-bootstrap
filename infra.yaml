@@ -69,6 +69,7 @@ aks:
   #       enabled:  false
   #       min_count: null
   #       max_count: null
+  # ambassador_static_ip: 10.240.1.99
 
 vertica:
   resource_group_name: vertica-group

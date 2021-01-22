@@ -16,7 +16,10 @@ variable "k8s_version" {
   description = "Kubernetes version"
   type        = string
 }
-
+variable "private_cluster_enabled" {
+  description = "Create a Private AKS cluster"
+  type        = bool
+}
 
 variable subnet_id {
   description = "ID of subnet where Kubernetes Nodes will be installed"
@@ -35,6 +38,11 @@ variable "ssh_public_key" {
 
 variable resource_group {
   description = "Name of the AKS cluster resource group"
+  type        = string
+}
+
+variable node_resource_group {
+  description = "Name of the AKS cluster node resource group"
   type        = string
 }
 

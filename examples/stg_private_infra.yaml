@@ -1,16 +1,10 @@
 
-cloud_provider: azure
+cloud_provider: azure-private
 subscription_id: <<Please Provide>>
 tenant_id: <<Please Provide>>
 client_id: <<Please Provide>>
 client_secret: <<Please Provide>>
 location: canadacentral
-
-log:
-  analytics_workspace:
-    location: canadacentral
-    sku: PerGB2018
-    name: stg-aks-canadacentral
 
 ## OPTIONAL: Terraform persisting state in remote storage
 backend:
@@ -28,14 +22,16 @@ ssh:
 
 aks:
   cluster_name: aks-cluster
-  resource_group_name: aks-stg
+  resource_group_name: agility
+  node_resource_group: agility_aks
   k8s_version: 1.17.13
+  private_cluster_enabled: true
   network:
-    name: aks-network
+    name: agility-vnet
     cidr:
       - 10.240.0.0/16
   subnet:
-    name: aks-subnet
+    name: agility-vnet-subnet
     cidr:
       - 10.240.1.0/24
 
@@ -69,23 +65,24 @@ aks:
         enabled:  false
         min_count: null
         max_count: null
+  ambassador_static_ip: 10.240.1.99
 
 vertica:
-  resource_group_name: vertica-stg
+  resource_group_name: agility_pub
   flavor: Standard_E16s_v3
   node_count: 3
   bkp_disk_size: 1023
   disk_size: 3069
   network:
-    name: vertica-network
+    name: agility-vnet
     cidr:
-      - 10.10.0.0/16
+      - 10.240.0.0/16
   subnet:
-    name: vertica-subnet
+    name: agility-vnet-subnet
     cidr:
-      - 10.10.1.0/24
+      - 10.240.1.0/24
   #Fixed Vertica Load Balancer static IP (in vertica subnet)
-  lb_static_ip: 10.10.1.15
+  lb_static_ip: 10.240.1.15
 
 data_science:
   enabled: true

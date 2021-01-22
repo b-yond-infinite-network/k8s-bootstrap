@@ -22,7 +22,7 @@ resource "azurerm_resource_group" "k8s" {
 }
 
 module "aks_network" {
-  source              = "./modules/vnet"
+  source              = "../modules/vnet"
   resource_group_name = azurerm_resource_group.k8s.name
   location            = var.location
   vnet_name           = var.aks_network_name
@@ -36,7 +36,7 @@ module "aks_network" {
 }
 
 module "vertica_network" {
-  source              = "./modules/vnet"
+  source              = "../modules/vnet"
   resource_group_name = azurerm_resource_group.vertica.name
   location            = var.location
   vnet_name           = var.vertica_network_name
@@ -50,7 +50,7 @@ module "vertica_network" {
 }
 
 module "vnet_peering" {
-  source              = "./modules/vnet_peering"
+  source              = "../modules/vnet_peering"
   vnet_1_name         = var.vertica_network_name
   vnet_1_id           = module.vertica_network.vnet_id
   vnet_1_rg           = azurerm_resource_group.vertica.name
@@ -63,7 +63,7 @@ module "vnet_peering" {
 
 
 module "bastion" {
-  source         = "./modules/bastion"
+  source         = "../modules/bastion"
   location       = var.location
   resource_group = azurerm_resource_group.vertica.name
   subnet_id      = module.vertica_network.subnet_ids[var.vertica_subnet_name]
@@ -72,7 +72,7 @@ module "bastion" {
 }
 
 module "data_science" {
-  source          = "./modules/data_science"
+  source          = "../modules/data_science"
   instances_count = var.data_science_enabled ? 1 : 0
   location        = var.location
   resource_group  = azurerm_resource_group.vertica.name
@@ -84,7 +84,7 @@ module "data_science" {
 }
 
 module "vertica_cluster" {
-  source         = "./modules/vertica_cluster"
+  source         = "../modules/vertica_cluster"
   node_count     = var.vertica_node_count
   location       = var.location
   resource_group = azurerm_resource_group.vertica.name
@@ -98,11 +98,13 @@ module "vertica_cluster" {
 }
 
 module "k8s_cluster" {
-  source                           = "./modules/aks"
+  source                           = "../modules/aks"
   location                         = var.location
   client_id                        = var.client_id
   client_secret                    = var.client_secret
   resource_group                   = azurerm_resource_group.k8s.name
+  node_resource_group              = var.aks_node_resource_group
+  private_cluster_enabled          = var.aks_private_cluster_enabled
   cluster_name                     = var.aks_cluster_name
   k8s_version                      = var.aks_k8s_version
   default_node_pool                = var.aks_default_node_pool
@@ -114,4 +116,11 @@ module "k8s_cluster" {
   log_analytics_workspace_location = var.log_analytics_workspace_location
   log_analytics_workspace_sku      = var.log_analytics_workspace_sku
   addons                           = var.aks_addons
+}
+
+module "ambassador" {
+  source         = "../modules/ambassadorIP"
+  location       = var.location
+  node_resource_group = module.k8s_cluster.node_resource_group
+  subnet_id      = module.aks_network.subnet_ids[var.aks_subnet_name]
 }

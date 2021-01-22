@@ -126,7 +126,7 @@ Duplicate/edit `infra.yaml` file to configure these properties (Azure example):
 
 | Property Name       | Description                                                                           |
 |---------------------|---------------------------------------------------------------------------------------|
-| cloud_provider      | The only valid value for now is `azure`.                                              |
+| cloud_provider      | The only valid values for now are `azure-private or azure-public`.  Choosing private will require an existing resource group and vnet/subnet                                          |
 | subscription_id     | Your account subscription id, e.g. $SUBSCRIPTION_ID obtained above.                   |
 | tenant_id           | Your account tenant id, e.g. $TENANT_ID obtained above.                               |
 | client_id           | Service Principal Id, e.g. $CLIENT_ID obtained above.                                 |
