@@ -4,6 +4,6 @@
 *.tfstate.backup
 id_rsa*
 kube_config
-output*
+output/*
 generated*
 examples/test-infra*
