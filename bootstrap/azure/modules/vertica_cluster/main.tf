@@ -37,6 +37,23 @@ resource "azurerm_network_interface_backend_address_pool_association" "azvm" {
   backend_address_pool_id = azurerm_lb_backend_address_pool.azvm.id
 }
 
+resource "azurerm_lb_probe" "example" {
+  resource_group_name = var.resource_group
+  loadbalancer_id     = azurerm_lb.example.id
+  name                = "vertica-running-probe"
+  port                = 5433
+}
+
+resource "azurerm_lb_rule" "azvm" {
+  resource_group_name            = var.resource_group
+  loadbalancer_id                = azurerm_lb.azvm.id
+  name                           = "VertRule"
+  protocol                       = "Tcp"
+  frontend_port                  = 5433
+  backend_port                   = 5433
+  frontend_ip_configuration_name = "VerticaIP"
+}
+
 resource "azurerm_managed_disk" "azvm" {
   count                = var.node_count
   name                 = "datadisk_existing_${count.index}"
