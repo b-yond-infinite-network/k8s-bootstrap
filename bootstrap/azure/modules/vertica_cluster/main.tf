@@ -37,9 +37,9 @@ resource "azurerm_network_interface_backend_address_pool_association" "azvm" {
   backend_address_pool_id = azurerm_lb_backend_address_pool.azvm.id
 }
 
-resource "azurerm_lb_probe" "example" {
+resource "azurerm_lb_probe" "azvm" {
   resource_group_name = var.resource_group
-  loadbalancer_id     = azurerm_lb.example.id
+  loadbalancer_id     = azurerm_lb.azvm.id
   name                = "vertica-running-probe"
   port                = 5433
 }
