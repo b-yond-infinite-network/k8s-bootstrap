@@ -51,7 +51,8 @@ resource "azurerm_lb_rule" "azvm" {
   protocol                       = "Tcp"
   frontend_port                  = 5433
   backend_port                   = 5433
-  frontend_ip_configuration_name = "VerticaIP"
+  probe_id                       = azurerm_lb_probe.azvm.id
+  frontend_ip_configuration_name = "verticalb"
 }
 
 resource "azurerm_managed_disk" "azvm" {
