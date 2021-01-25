@@ -156,10 +156,10 @@ EOF
 
     # Render CIDR options
     {
-        convert_tfvars_list "aks_network_cidr" "${aks_network_cidr[@]}"
-        convert_tfvars_list "aks_subnet_cidr" "${aks_subnet_cidr[@]}"
-        convert_tfvars_list "vertica_subnet_cidr" "${vertica_subnet_cidr[@]}"
-        convert_tfvars_list "vertica_network_cidr" "${vertica_network_cidr[@]}"
+        convert_tfvars_list "aks_network_cidr" "${aks_network_cidr[@]:-}"
+        convert_tfvars_list "aks_subnet_cidr" "${aks_subnet_cidr[@]:-}"
+        convert_tfvars_list "vertica_subnet_cidr" "${vertica_subnet_cidr[@]:-}"
+        convert_tfvars_list "vertica_network_cidr" "${vertica_network_cidr[@]:-}"
     } >>"$variables_file"
 }
 

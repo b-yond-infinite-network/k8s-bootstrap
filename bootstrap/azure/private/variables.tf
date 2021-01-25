@@ -65,11 +65,11 @@ variable "aks_subnet_cidr" {
 }
 
 variable "aks_node_resource_group" {
-  type        = string
+  type = string
 }
 
 variable "aks_private_cluster_enabled" {
-  type        = bool
+  type = bool
 }
 
 variable "aks_cluster_name" {
@@ -152,6 +152,7 @@ variable "vertica_network_cidr" {
   type    = list(string)
   default = ["10.10.0.0/16"]
 }
+
 variable "vertica_subnet_name" {}
 
 variable "vertica_subnet_cidr" {

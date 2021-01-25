@@ -124,20 +124,20 @@ Reference: [store-state-in-azure-storage](https://docs.microsoft.com/en-us/azure
 
 Duplicate/edit `infra.yaml` file to configure these properties (Azure example):
 
-| Property Name       | Description                                                                           |
-|---------------------|---------------------------------------------------------------------------------------|
-| cloud_provider      | The only valid values for now are `azure-private or azure-public`.  Choosing private will require an existing resource group and vnet/subnet                                          |
-| subscription_id     | Your account subscription id, e.g. $SUBSCRIPTION_ID obtained above.                   |
-| tenant_id           | Your account tenant id, e.g. $TENANT_ID obtained above.                               |
-| client_id           | Service Principal Id, e.g. $CLIENT_ID obtained above.                                 |
-| client_secret       | Service Principal Secret, e.g. $CLIENT_SECRET obtained above.                         |
-| location            | Azure Location, a list can be obtained with `az account list-locations -o table`      |
-| backend.container_name         |  The name of the blob container. When not defined, tfstate files will be stored locally in the `./output` directory  |
-| backend.resource_group_name        |  The name of the resource group where the Azure Storage account is located.                                                |
-| backend.storage_account_name         | The name of the Azure Storage account.  |
-| backend.access_key         | The storage access key. When not defined an `az login` will be required prior to the bootstrap execution.  |
-| aks.cluster_name        | Name of the AKS cluster to be created.                                                |
-| aks.k8s_version         | Kubernetes version to be installed. One of: `az aks get-versions -l eastus -o table`  |
+| Property Name                  | Description                                                                                                                                  |
+|--------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| `cloud_provider`               | The only valid values for now are `azure-private or azure-public`.  Choosing private will require an existing resource group and vnet/subnet |
+| `subscription_id`              | Your account subscription id, e.g. $SUBSCRIPTION_ID obtained above.                                                                          |
+| `tenant_id`                    | Your account tenant id, e.g. $TENANT_ID obtained above.                                                                                      |
+| `client_id`                    | Service Principal Id, e.g. $CLIENT_ID obtained above.                                                                                        |
+| `client_secret`                | Service Principal Secret, e.g. $CLIENT_SECRET obtained above.                                                                                |
+| `location`                     | Azure Location, a list can be obtained with `az account list-locations -o table`                                                             |
+| `backend.container_name`       |  The name of the blob container. When not defined, tfstate files will be stored locally in the `./output` directory                          |
+| `backend.resource_group_name`  |  The name of the resource group where the Azure Storage account is located.                                                                  |
+| `backend.storage_account_name` | The name of the Azure Storage account.                                                                                                       |
+| `backend.access_key`           | The storage access key. When not defined an `az login` will be required prior to the bootstrap execution.                                    |
+| `aks.cluster_name`             | Name of the AKS cluster to be created.                                                                                                       |
+| `aks.k8s_version`              | Kubernetes version to be installed. One of: `az aks get-versions -l eastus -o table`                                                         |
 
 
 For other properties, check the comments in the properties file and put the appropriate ones in each case.
