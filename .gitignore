@@ -7,3 +7,4 @@ kube_config
 output/*
 generated*
 examples/test-infra*
+output.tar.gz
