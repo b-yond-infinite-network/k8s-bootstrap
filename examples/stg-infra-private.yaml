@@ -1,0 +1,118 @@
+
+cloud_provider: azure-private
+
+## Azure account options
+subscription_id: <<Please Provide>>
+tenant_id: <<Please Provide>>
+client_id: <<Please Provide>>
+client_secret: <<Please Provide>>
+
+## Azure location where all the resources will be created.
+location: canadacentral
+
+## Azure Logging and monitoring options.
+log:
+  analytics_workspace:
+    location: canadacentral
+    sku: PerGB2018
+    name: stg-aks-canadacentral
+
+## Terraform persisting state in remote storage.
+# backend:
+#   enabled: true
+#   container_name: k8s-bootstrap
+#   resource_group_name: k8s-bootstrap
+#   storage_account_name: k8sbootstrap31479
+#   access_key:
+
+## SSH VM access configuration
+ssh:
+  user: ubuntu
+# private_key: ./id_rsa
+# public_key: ./id_rsa.pub
+
+## AKS Cluster configuration
+aks:
+  cluster_name: aks-cluster
+
+  # Existing Resource Group.
+  resource_group_name: agility
+
+  # Resource group to be created for the aks nodes. 
+  # This one will be created by the script.
+  node_resource_group: agility_aks
+  k8s_version: 1.17.13
+  private_cluster_enabled: true
+  network:
+    # Existing Vnet, cidr not used.
+    name: agility-vnet
+    # cidr:
+    #   - 10.240.0.0/16
+  subnet:
+     # Existing Subnet, cidr not used.
+    name: agility-vnet-subnet
+    # cidr:
+    #   - 10.240.1.0/24
+
+  default_node_pool:
+    name: "default"
+    node_count: 1
+    vm_size: "Standard_D8s_v3"
+    zones: [1, 2, 3]
+    auto_scaling:
+        enabled:  false
+        min_count: null
+        max_count: null
+  additional_node_pools:
+    - name: pool2
+      node_count: 1
+      vm_size: "Standard_D8s_v3"
+      zones: [1, 2, 3]
+      node_os: "Linux"
+      taints: ["ad=true:NoSchedule"]
+      auto_scaling:
+        enabled:  false
+        min_count: null
+        max_count: null
+    - name: pool3
+      node_count: 1
+      vm_size: "Standard_D8s_v3"
+      zones: [1, 2, 3]
+      node_os: "Linux"
+      taints: ["kafka=true:NoSchedule"]
+      auto_scaling:
+        enabled:  false
+        min_count: null
+        max_count: null
+
+  # Ambassador static IP. Must be part of aks subnet CIDR.
+  ambassador_static_ip: 10.240.1.99
+
+## Vertica cluster configuration
+vertica:
+  # Existing Resource Group. Must be the same name as the AKS one.
+  resource_group_name: agility
+
+  flavor: Standard_E16s_v3
+  node_count: 1
+  bkp_disk_size: 1023
+  disk_size: 3069
+  network:
+    # Existing Vnet, cidr not used. Must be the same name as the AKS Vnet.
+    name: agility-vnet
+    # cidr:
+    #   - 10.10.0.0/16
+  subnet:
+    # Existing Subnet, cidr not used. Must be the same name as the AKS Subnet.
+    name: agility-vnet-subnet
+    # cidr:
+    #   - 10.10.1.0/24
+
+  #Fixed Vertica Load Balancer static IP (in vertica subnet)
+  lb_static_ip: 10.240.1.15
+
+## Data Science VM configuration. Created in AKS provided subnet.
+data_science:
+  enabled: true
+  flavor: Standard_E16s_v3
+  disk_size: 1023

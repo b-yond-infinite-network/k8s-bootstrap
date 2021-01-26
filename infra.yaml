@@ -1,18 +1,24 @@
 
-cloud_provider: azure
+## Cloud provider options azure-public|azure-private
+cloud_provider: azure-public
+
+## Azure account options
 subscription_id: <<Please Provide>>
 tenant_id: <<Please Provide>>
 client_id: <<Please Provide>>
 client_secret: <<Please Provide>>
+
+## Azure location where all the resources will be created.
 location: canadacentral
 
+## Azure Logging and monitoring options.
 log:
   analytics_workspace:
     location: canadacentral
     sku: PerGB2018
     name: ws-aks-canadacentral
 
-## OPTIONAL: Terraform persisting state in remote storage
+## Terraform persisting state in remote storage.
 # backend:
 #   enabled: true
 #   container_name: k8s-bootstrap
@@ -20,16 +26,24 @@ log:
 #   storage_account_name: k8sbootstrap31479
 #   access_key:
 
+## SSH VM access configuration
+# This section defines username and credentials to access all the
+# generated VMs. When public/private keys are not provided,
+# they'll be created by the script.
 ssh:
   user: ubuntu
-  # When not provided (commented) they'll be created by the script.
   # private_key: ./id_rsa
   # public_key: ./id_rsa.pub
 
+## AKS Cluster configuration
 aks:
   cluster_name: aks-cluster
   resource_group_name: aks-group
+
+  # Resource group to be created for the aks nodes.
+  node_resource_group: agility-aks
   k8s_version: 1.16.15
+  private_cluster_enabled: false
   network:
     name: aks-network
     cidr:
@@ -42,13 +56,23 @@ aks:
     name: default
     node_count: 2
     vm_size: Standard_D4s_v3
+
+    # Availability zone(s) (as an inline array). Optional.
     zones: [1, 2]
+
+    # OS definition [Linux|Windows]. Default Linux.
     #node_os:  "Linux"
-    labels: {test="true",test2="true"}
+
+    # Node pool labels, inline hash and no spaces.
+    #labels: {test="true",test2="true"}
+
+    # Autoscaler options. ref: https://docs.microsoft.com/en-us/azure/aks/cluster-autoscaler
     auto_scaling:
         enabled:  false
         min_count: null
         max_count: null
+
+    # List of additional node pools. Optional.
   # additional_node_pools:
   #   - name: pool2
   #     node_count: 2
@@ -70,6 +94,10 @@ aks:
   #       min_count: null
   #       max_count: null
 
+    # Ambassador static IP. Must be part of aks subnet CIDR.
+    ambassador_static_ip: 10.240.1.99
+
+## Vertica cluster configuration
 vertica:
   resource_group_name: vertica-group
   flavor: Standard_D4s_v3
@@ -88,6 +116,7 @@ vertica:
   lb_static_ip: 10.10.1.15
 
 
+## Data Science VM configuration. Created in vertica cluster subnet.
 data_science:
   enabled: true
   flavor: Standard_D2s_v3

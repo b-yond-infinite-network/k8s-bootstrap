@@ -44,7 +44,7 @@ variable "ssh_private_key" {
 
 # AKS CLUSTER VARIABLES
 variable aks_resource_group_name {
-  description = "The AKS resource group name to be created"
+  description = "The AKS resource group name to be used"
   default     = "aks-resource-group"
 }
 
@@ -62,6 +62,14 @@ variable "aks_subnet_name" {
 variable "aks_subnet_cidr" {
   type    = list(string)
   default = ["10.240.1.0/24"]
+}
+
+variable "aks_node_resource_group" {
+  type = string
+}
+
+variable "aks_private_cluster_enabled" {
+  type = bool
 }
 
 variable "aks_cluster_name" {
@@ -117,6 +125,12 @@ variable "aks_addons" {
   }
 }
 
+variable aks_ambassador_static_ip {
+  description = "Load Balancer Fixed Ip for ambassador."
+  type        = string
+  default     = "10.240.1.99"
+}
+
 variable log_analytics_workspace_name {
   default = "testLogAnalyticsWorkspaceName"
 }
@@ -138,6 +152,7 @@ variable "vertica_network_cidr" {
   type    = list(string)
   default = ["10.10.0.0/16"]
 }
+
 variable "vertica_subnet_name" {}
 
 variable "vertica_subnet_cidr" {

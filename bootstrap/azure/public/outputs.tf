@@ -3,7 +3,7 @@ output "kube_config" {
 }
 
 output "ambassador_public_ip" {
-  value = module.k8s_cluster.ambassador_public_ip
+  value = module.ambassador.ambassador_public_ip
 }
 
 output "ds_node_private_ip" {

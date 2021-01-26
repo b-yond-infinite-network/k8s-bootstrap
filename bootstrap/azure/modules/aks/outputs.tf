@@ -26,6 +26,7 @@ output "host" {
   value = azurerm_kubernetes_cluster.k8s.kube_config.0.host
 }
 
-output "ambassador_public_ip" {
-  value = azurerm_public_ip.ambassador
+output "node_resource_group" {
+  value = azurerm_kubernetes_cluster.k8s.node_resource_group
 }
+

@@ -156,10 +156,10 @@ EOF
 
     # Render CIDR options
     {
-        convert_tfvars_list "aks_network_cidr" "${aks_network_cidr[@]}"
-        convert_tfvars_list "aks_subnet_cidr" "${aks_subnet_cidr[@]}"
-        convert_tfvars_list "vertica_subnet_cidr" "${vertica_subnet_cidr[@]}"
-        convert_tfvars_list "vertica_network_cidr" "${vertica_network_cidr[@]}"
+        convert_tfvars_list "aks_network_cidr" "${aks_network_cidr[@]:-}"
+        convert_tfvars_list "aks_subnet_cidr" "${aks_subnet_cidr[@]:-}"
+        convert_tfvars_list "vertica_subnet_cidr" "${vertica_subnet_cidr[@]:-}"
+        convert_tfvars_list "vertica_network_cidr" "${vertica_network_cidr[@]:-}"
     } >>"$variables_file"
 }
 
@@ -537,8 +537,12 @@ function main() {
     if [[ "${_arg_command}" == "destroy" ]]; then
         generate_tfvalues_file "${_arg_file}"
 
-        if [[ "${cloud_provider:-}" == "azure" ]]; then
-            run_terraform_destroy "bootstrap/azure" \
+        if [[ "${cloud_provider:-}" == "azure-private" ]]; then
+            run_terraform_destroy "bootstrap/azure/private" \
+                "${aks_resource_group_name}" \
+                "${_arg_force}"
+        elif [[ "${cloud_provider:-}" == "azure-public" ]]; then
+            run_terraform_destroy "bootstrap/azure/public" \
                 "${aks_resource_group_name}" \
                 "${_arg_force}"
         else
@@ -548,8 +552,13 @@ function main() {
     elif [[ "${_arg_command}" == "apply" ]]; then
         generate_tfvalues_file "${_arg_file}"
 
-        if [[ "${cloud_provider:-}" == "azure" ]]; then
-            run_terraform_create "bootstrap/azure" \
+        if [[ "${cloud_provider:-}" == "azure-private" ]]; then
+            run_terraform_create "bootstrap/azure/private" \
+                "${aks_resource_group_name}" \
+                "${_arg_dry_run}" \
+                "${_arg_force}"
+        elif [[ "${cloud_provider:-}" == "azure-public" ]]; then
+            run_terraform_create "bootstrap/azure/public" \
                 "${aks_resource_group_name}" \
                 "${_arg_dry_run}" \
                 "${_arg_force}"

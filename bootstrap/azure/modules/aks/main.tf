@@ -29,6 +29,8 @@ resource "azurerm_kubernetes_cluster" "k8s" {
   resource_group_name = var.resource_group
   dns_prefix          = var.cluster_name
   kubernetes_version  = var.k8s_version
+  node_resource_group = var.node_resource_group
+  private_cluster_enabled = var.private_cluster_enabled
 
   linux_profile {
     admin_username = var.vm_user
@@ -111,10 +113,3 @@ resource "azurerm_kubernetes_cluster_node_pool" "aks" {
   enable_node_public_ip = false
 }
 
-resource "azurerm_public_ip" "ambassador" {
-  name                = "ambassadorIP"
-  location            = azurerm_kubernetes_cluster.k8s.location
-  resource_group_name = azurerm_kubernetes_cluster.k8s.node_resource_group
-  sku                 = "Standard"
-  allocation_method   = "Static"
-}
